@@ -69,6 +69,7 @@ t_addr iter_ptr; // advances at end of iter
 // Future optimizations:
 //   - Walk from both sides simultaneously, keeping current_max_{addr,data,valid} as well (requires more FF storage, but fewer iterations)
 //   - Capture prev read address so it can be held when not reading (IDLE, INIT, ADVANCE, DONE, SWAP_TO_LO)
+//   - Some FSM states can be optimized (do initialization in IDLE, remove ADVANCE state, etc)
 //
 
 always_comb begin
