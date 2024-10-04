@@ -22,13 +22,13 @@ module ctl (
 /////////////////////////
 
 typedef enum logic[2:0] {
-    IDLE,
-    INIT,
-    WALK,
-    SWAP_TO_LO,
-    SWAP_TO_HI,
-    ADVANCE,
-    DONE
+    IDLE       = 3'b000,
+    INIT       = 3'b001,
+    WALK       = 3'b011,
+    SWAP_TO_HI = 3'b111,
+    SWAP_TO_LO = 3'b110,
+    ADVANCE    = 3'b010,
+    DONE       = 3'b100
 } t_fsm;
 t_fsm fsm, fsm_nxt;
 
@@ -55,6 +55,22 @@ t_addr iter_ptr; // advances at end of iter
 //   if (min_ptr != iter_ptr):
 //     mem[min_ptr] = mem[iter_ptr] // SWAP_TO_HI
 //     mem[iter_ptr] = min_data     // SWAP_TO_LO
+//
+//
+// Assumptions:
+//   - Array writes are primary consumer of power; fewer writes = less energy consumed
+//   - ... this means that sorting algs with better big-O but more data movement are likely worse than Selection Sort
+//
+// Current energy optimizations:
+//   - Only one full-width temp data register (using comb read to read the array and write the read data in the same cycle -- possible timing path)
+//   - Greycoded FSM
+//   - Skip the swap if trying to swap to/from same index
+//
+// Future optimizations:
+//   - Walk from both sides simultaneously, keeping current_max_{addr,data,valid} as well (requires more FF storage, but fewer iterations)
+//   - Capture prev read address so it can be held when not reading (IDLE, INIT, ADVANCE, DONE, SWAP_TO_LO)
+//
+
 always_comb begin
     fsm_nxt = fsm;
     if (rst) begin
@@ -78,9 +94,16 @@ always_comb begin
 end
 `DFF(fsm, fsm_nxt, clk)
 
+assign done = fsm == DONE;
+
 /////////////////////////
 // Logic ////////////////
 /////////////////////////
+
+//
+// Walk pointer: initializes to zero; increments each cycle during walk,
+// resetting to the iter ptr in ADVANCE
+//
 
 t_addr walk_ptr_nxt;
 always_comb begin
@@ -93,6 +116,10 @@ always_comb begin
 end
 `DFF(walk_ptr, walk_ptr_nxt, clk)
 
+//
+// Iter pointer: initializes to zero; increments in ADVANCE
+//
+
 t_addr iter_ptr_nxt;
 always_comb begin
     case (fsm)
@@ -102,6 +129,14 @@ always_comb begin
     endcase
 end
 `DFF(iter_ptr, iter_ptr_nxt, clk)
+
+//
+// current_min addr/data/valid
+//
+// addr/data = Don'tCare when ~valid
+//
+// records the minimum data value seen (+ its address) during each walk
+//
 
 t_addr current_min_addr;
 t_addr current_min_addr_nxt;
@@ -130,6 +165,21 @@ end
 `DFF(current_min_data, current_min_data_nxt, clk)
 `DFF(current_min_valid, current_min_valid_nxt, clk)
 
+//
+// Array is written only in SWAP_TO_{HI,LO} states.  
+//
+// SWAP_TO_HI means we need to read the value at iter_ptr and write it into
+// current_min_addr
+//
+// SWAP_TO_LO means we need to write the saved current_min_data into the
+// location specified by iter_ptr
+//
+// i.e. we are doing SWAP(iter_ptr, current_min_addr) using current_min_data
+// as a temp holding register
+//
+// We only need to do the write if iter_ptr != current_min_addr
+//
+
 always_comb begin
     wr_en   = '0;
     wr_addr = '0;
@@ -156,8 +206,6 @@ always_comb begin
         end
     endcase
 end
-
-assign done = fsm == DONE;
 
 endmodule
 
