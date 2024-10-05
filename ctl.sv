@@ -39,6 +39,8 @@ t_fsm fsm, fsm_nxt;
 t_addr walk_ptr; // advances inside the iter while walking
 t_addr iter_ptr; // advances at end of iter
 
+logic clk_busy; // gated clock that is active when FSM is active
+
 /////////////////////////
 // FSM //////////////////
 /////////////////////////
@@ -65,6 +67,7 @@ t_addr iter_ptr; // advances at end of iter
 //   - Only one full-width temp data register (using comb read to read the array and write the read data in the same cycle -- possible timing path)
 //   - Greycoded FSM
 //   - Skip the swap if trying to swap to/from same index
+//   - Gated clock when FSM is idle
 //
 // Future optimizations:
 //   - Walk from both sides simultaneously, keeping current_max_{addr,data,valid} as well (requires more FF storage, but fewer iterations)
@@ -81,7 +84,8 @@ always_comb begin
             IDLE:       if ( start                  ) fsm_nxt = INIT;
             INIT:       if ( 1'b1                   ) fsm_nxt = WALK;
 
-            WALK:       if ( walk_ptr == NUM_ROWS-1 ) fsm_nxt = SWAP_TO_HI;
+            WALK:       if ( walk_ptr == NUM_ROWS-1 & (iter_ptr != current_min_addr_nxt)) fsm_nxt = SWAP_TO_HI;
+                   else if ( walk_ptr == NUM_ROWS-1 & (iter_ptr == current_min_addr_nxt)) fsm_nxt = ADVANCE;
 
             SWAP_TO_HI: if ( 1'b1                   ) fsm_nxt = SWAP_TO_LO;
             SWAP_TO_LO: if ( 1'b1                   ) fsm_nxt = ADVANCE;
@@ -93,9 +97,13 @@ always_comb begin
         endcase
     end
 end
-`DFF(fsm, fsm_nxt, clk)
+`DFF(fsm, fsm_nxt, clk_busy)
 
 assign done = fsm == DONE;
+
+logic busy_en;
+assign busy_en = rst | start | (fsm != IDLE);
+icg ckbusy ( clk_busy, clk, busy_en );
 
 /////////////////////////
 // Logic ////////////////
@@ -115,7 +123,7 @@ always_comb begin
         default: walk_ptr_nxt = walk_ptr;
     endcase
 end
-`DFF(walk_ptr, walk_ptr_nxt, clk)
+`DFF(walk_ptr, walk_ptr_nxt, clk_busy)
 
 //
 // Iter pointer: initializes to zero; increments in ADVANCE
@@ -129,7 +137,7 @@ always_comb begin
         default: iter_ptr_nxt = iter_ptr;
     endcase
 end
-`DFF(iter_ptr, iter_ptr_nxt, clk)
+`DFF(iter_ptr, iter_ptr_nxt, clk_busy)
 
 //
 // current_min addr/data/valid
@@ -162,9 +170,9 @@ always_comb begin
         end
     end
 end
-`DFF(current_min_addr, current_min_addr_nxt, clk)
-`DFF(current_min_data, current_min_data_nxt, clk)
-`DFF(current_min_valid, current_min_valid_nxt, clk)
+`DFF(current_min_addr, current_min_addr_nxt, clk_busy)
+`DFF(current_min_data, current_min_data_nxt, clk_busy)
+`DFF(current_min_valid, current_min_valid_nxt, clk_busy)
 
 //
 // Array is written only in SWAP_TO_{HI,LO} states.  
@@ -178,7 +186,8 @@ end
 // i.e. we are doing SWAP(iter_ptr, current_min_addr) using current_min_data
 // as a temp holding register
 //
-// We only need to do the write if iter_ptr != current_min_addr
+// We only need to do the write if iter_ptr != current_min_addr (this is
+// handled in the FSM)
 //
 
 always_comb begin
@@ -189,19 +198,19 @@ always_comb begin
     case(fsm)
         SWAP_TO_HI: begin
             rd_addr = iter_ptr;
-            wr_en   = iter_ptr != current_min_addr;
+            wr_en   = 1'b1;
             wr_addr = current_min_addr;
             wr_data = rd_data;
         end
         SWAP_TO_LO: begin
             rd_addr = '0;
-            wr_en   = iter_ptr != current_min_addr;
+            wr_en   = 1'b1;
             wr_addr = iter_ptr;
             wr_data = current_min_data;
         end
         default: begin
             wr_en   = '0;
-            wr_addr = '0;
+            wr_addr = iter_ptr;
             wr_data = '0;
             rd_addr = walk_ptr;
         end

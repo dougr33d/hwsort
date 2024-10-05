@@ -65,20 +65,21 @@ module top ();
         $dumpfile("test.vcd");
         $dumpvars(0,top);
 
-        repeat(10) @(posedge clk);
+        repeat(10) @(negedge clk);
         rst = 1'b0;
-        repeat(2) @(posedge clk);
+        repeat(2) @(negedge clk);
 
         start = 1'b1;
-        @(posedge clk);
+        @(negedge clk);
         start = 1'b0;
-        repeat(800) @(posedge clk);
+        repeat(800) @(negedge clk);
         $finish();
     end
 
     initial begin
         @(negedge rst);
         @(negedge done);
+        repeat(5) @(negedge clk);
         $finish();
     end
 
